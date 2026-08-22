@@ -1,0 +1,19 @@
+[package]
+name = "linkscan"
+version = "0.1.0"
+edition = "2021"
+description = "Crawl a site and find the links that are actually broken"
+license = "MIT"
+repository = "https://github.com/dkautomation23/linkscan"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip"] }
+scraper = "0.20"
+url = "2"
+clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
