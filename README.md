@@ -81,7 +81,20 @@ Broken
         ... and 4 more page(s)
 ```
 
-## Build
+## Install
+
+A built binary for Linux, macOS (Apple silicon) and Windows is attached to
+every [release](https://github.com/dkautomation23/linkscan/releases) — no toolchain,
+no compile step:
+
+```bash
+curl -sSL https://github.com/dkautomation23/linkscan/releases/latest/download/linkscan-v1.0.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+./linkscan-v1.0.0-x86_64-unknown-linux-gnu/linkscan --help
+```
+
+Each archive is built and tested on the platform it targets, not cross-compiled.
+
+To build it yourself:
 
 ```bash
 git clone https://github.com/dkautomation23/linkscan.git
