@@ -90,7 +90,9 @@ cargo build --release
 ./target/release/linkscan https://example.com
 ```
 
-Rust 1.75+. The binary is self-contained — copy it to a server and it runs.
+Stable Rust; CI builds and tests on 1.98.0, and the committed `Cargo.lock` is v4,
+so anything older than Cargo 1.78 cannot read it. The binary is self-contained —
+copy it to a server and it runs.
 
 ```bash
 cargo test        # 15 tests, no network
