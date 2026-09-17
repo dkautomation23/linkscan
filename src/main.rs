@@ -148,8 +148,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Arc::new(client);
     let mut tasks = Vec::with_capacity(targets.len());
 
-    for raw in targets.keys().cloned() {
-        let Ok(url) = Url::parse(&raw) else { continue };
+    for raw in targets.keys() {
+        let Ok(url) = Url::parse(raw) else { continue };
         let permit_source = semaphore.clone();
         let client = client.clone();
         tasks.push(tokio::spawn(async move {

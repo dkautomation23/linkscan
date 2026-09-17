@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned so a new clippy lint in a future stable cannot turn the badge
+      # red without a single line of this code changing.
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal --component clippy
+          rustup default 1.98.0
+      - name: Build
+        run: cargo build --release --locked
+      - name: Test
+        run: cargo test --locked
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings

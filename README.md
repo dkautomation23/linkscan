@@ -1,5 +1,7 @@
 # linkscan
 
+[![CI](https://github.com/dkautomation23/linkscan/actions/workflows/ci.yml/badge.svg)](https://github.com/dkautomation23/linkscan/actions/workflows/ci.yml)
+
 Crawls a site and reports the links that are **actually** broken — with the page
 each one was found on, and without calling a bot-protected host dead.
 
@@ -7,7 +9,10 @@ each one was found on, and without calling a bot-protected host dead.
 linkscan https://example.com --depth 2 --csv broken.csv
 ```
 
-Single binary, no runtime, ~220 links checked in about 10 seconds.
+Single binary, no runtime. Wall clock is set by the hosts being checked rather
+than by the tool: 220 links on one site took about 10 seconds at the default 16
+concurrent requests, and a site full of slow third-party links will take longer
+no matter what checks it.
 
 ## Why another link checker
 
