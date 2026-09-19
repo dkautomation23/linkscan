@@ -1,13 +1,12 @@
-# Поставлено скриптом _security/rollout.py. Бесплатно.
-# Следит за уязвимыми версиями подключённых библиотек и сам шлёт PR с обновлением.
 version: 2
 updates:
-  - package-ecosystem: "github-actions"
+  - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-  - package-ecosystem: "cargo"
+
+  - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"

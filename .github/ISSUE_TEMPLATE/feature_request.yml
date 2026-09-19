@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest a crawl behavior, a classification rule, or a flag linkscan doesn't have yet.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do or detect?
+      description: >-
+        A crawling behavior, a link classification, or a report format that
+        linkscan currently doesn't support.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: What should linkscan do
+      description: A new flag, a new classification, a new output format — be as concrete as you can.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you've tried instead
+      description: A workaround, another tool, a manual check — helps judge how much this is worth.
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I'd be willing to open a PR for this
+          required: false
