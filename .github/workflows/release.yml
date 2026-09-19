@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write      # sign the provenance
+  attestations: write  # record it against the repository
 
 jobs:
   build:
@@ -23,7 +25,7 @@ jobs:
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install Rust
         run: |
           rustup toolchain install 1.98.0 --profile minimal
@@ -50,8 +52,12 @@ jobs:
             tar czf "${staging}.tar.gz" "$staging"
             echo "ASSET=${staging}.tar.gz" >> "$GITHUB_ENV"
           fi
+      - name: Attest that this artefact came from this workflow
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: "${{ env.ASSET }}"
       - name: Attach it to the release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: ${{ env.ASSET }}
           generate_release_notes: true
