@@ -13,6 +13,10 @@ scraper = "0.20"
 url = "2"
 clap = { version = "4", features = ["derive"] }
 
+[dev-dependencies]
+# Builds a compressed test payload for the decompression-bomb test in check.rs.
+flate2 = "1"
+
 [profile.release]
 opt-level = 3
 lto = true

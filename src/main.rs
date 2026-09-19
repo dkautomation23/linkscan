@@ -66,9 +66,18 @@ struct Args {
     #[arg(long)]
     csv: Option<String>,
 
+    /// Overwrite --csv if it already exists
+    #[arg(long)]
+    force: bool,
+
     /// Override the User-Agent
     #[arg(long, default_value = DEFAULT_AGENT)]
     user_agent: String,
+
+    /// Allow crawling and checking loopback, private and link-local addresses
+    /// (use when you are deliberately scanning your own internal network)
+    #[arg(long)]
+    allow_internal: bool,
 }
 
 /// A link plus every page it was found on - without the sources a report is
@@ -89,7 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let progress = std::io::stderr().is_terminal();
 
     let root = Url::parse(&args.url).or_else(|_| Url::parse(&format!("https://{}", args.url)))?;
-    let client = check::client(args.timeout, &args.user_agent)?;
+    let client = check::client(args.timeout, &args.user_agent, args.allow_internal)?;
 
     // ---- crawl -----------------------------------------------------------
     let mut queue: VecDeque<(Url, usize)> = VecDeque::from([(root.clone(), 0)]);
@@ -103,8 +112,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
+        if let Err(reason) = check::host_guard(&page, args.allow_internal) {
+            unreadable_pages.push((page.to_string(), reason));
+            continue;
+        }
         let body = match client.get(page.clone()).send().await {
-            Ok(response) if response.status().is_success() => response.text().await.unwrap_or_default(),
+            // The body is read through a cap, not `.text()` directly - gzip
+            // decompression means Content-Length bears no relation to what a
+            // hostile server can make this allocate. See check::read_capped.
+            Ok(response) if response.status().is_success() => match check::read_capped(response, check::MAX_BODY_BYTES).await {
+                Ok(body) => body,
+                Err(error) => {
+                    unreadable_pages.push((page.to_string(), error));
+                    continue;
+                }
+            },
             Ok(response) => {
                 unreadable_pages.push((page.to_string(), format!("HTTP {}", response.status().as_u16())));
                 continue;
@@ -120,7 +142,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // `links` is synchronous on purpose - see extract.rs.
-        let found: Vec<Found> = extract::links(&body, &page);
+        let found: Vec<Found> = extract::links(&body, &page, args.allow_internal);
         for item in found {
             let internal = extract::same_site(&root, &item.url);
             if !internal && args.no_external {
@@ -148,13 +170,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Arc::new(client);
     let mut tasks = Vec::with_capacity(targets.len());
 
+    let allow_internal = args.allow_internal;
     for raw in targets.keys() {
         let Ok(url) = Url::parse(raw) else { continue };
         let permit_source = semaphore.clone();
         let client = client.clone();
         tasks.push(tokio::spawn(async move {
             let _permit = permit_source.acquire_owned().await.expect("semaphore is never closed");
-            check::check(&client, url).await
+            check::check(&client, url, allow_internal).await
         }));
     }
 
@@ -175,7 +198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     report(&root, &outcomes, &targets, pages_crawled, &unreadable_pages, start);
 
     if let Some(path) = args.csv.as_deref() {
-        write_csv(path, &outcomes, &targets)?;
+        write_csv(path, &outcomes, &targets, args.force)?;
     }
 
     let problems = outcomes.iter().filter(|o| o.verdict.is_problem()).count();
@@ -280,8 +303,18 @@ fn write_csv(
     path: &str,
     outcomes: &[Outcome],
     targets: &BTreeMap<String, Sources>,
+    force: bool,
 ) -> std::io::Result<()> {
     use std::io::Write;
+
+    // A rerun must never quietly eat an earlier report - refuse instead of
+    // overwriting unless the caller explicitly asked for that.
+    if !force && std::path::Path::new(path).exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("{path} already exists; overwrite only with --force"),
+        ));
+    }
 
     fn escape(value: &str) -> String {
         if value.contains(',') || value.contains('"') {
