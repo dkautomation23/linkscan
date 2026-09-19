@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or something else not covered by the templates
+    url: mailto:hello@dkautomation.dev?subject=linkscan
+    about: Email for anything that isn't a bug report or a feature request.

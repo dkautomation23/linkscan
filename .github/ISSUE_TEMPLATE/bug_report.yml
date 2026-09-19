@@ -1,0 +1,59 @@
+name: Bug report
+description: linkscan crashed, misclassified a link, or produced a wrong report.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If the site you were scanning is private (staging, internal, behind
+        auth), don't paste its URL here — describe the shape of the problem
+        instead, or reproduce it against a public site or a small local HTML
+        file.
+  - type: input
+    id: version
+    attributes:
+      label: linkscan version
+      description: Output of `linkscan --version`
+      placeholder: linkscan 1.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS (Apple silicon)
+        - Windows
+        - Other (say which, below)
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Exact command you ran
+      placeholder: linkscan https://example.com --depth 2 --csv broken.csv
+    validations:
+      required: true
+  - type: input
+    id: site
+    attributes:
+      label: Site or URL (only if public)
+      placeholder: https://example.com
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: >-
+        For a misclassification, say what you expected the link to be
+        reported as: broken, could not verify, or a redirect.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Paste the terminal output if you can.
+      render: console
+    validations:
+      required: true
