@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# The default token can write; a build and a test run only need to read.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
