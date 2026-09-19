@@ -10,8 +10,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      # Pinned so a new clippy lint in a future stable cannot turn the badge
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # red without a single line of this code changing.
       - name: Install Rust
         run: |
