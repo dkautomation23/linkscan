@@ -5,10 +5,14 @@
 //! we cannot verify is reported as unverified, separately from anything we know
 //! is dead.
 
+use std::error::Error as _; // for reqwest::Error::source() in describe()
+use std::net::{IpAddr, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
 use reqwest::{Client, StatusCode};
 use url::Url;
+
+use crate::extract;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
@@ -86,26 +90,124 @@ fn describe(error: &reqwest::Error) -> (Verdict, String) {
     } else if error.is_connect() {
         (Verdict::Unreachable, "connection failed (DNS or TLS)".into())
     } else if error.is_redirect() {
-        (Verdict::Unreachable, "too many redirects".into())
+        // Covers both "too many redirects" and our own refusal (via
+        // Policy::custom in client(), below) to follow a redirect into an
+        // internal address - reqwest tags both as a redirect error, so
+        // surface the real reason instead of a one-size-fits-all guess.
+        (Verdict::Unreachable, error.source().map(|source| source.to_string()).unwrap_or_else(|| error.to_string()))
     } else {
         (Verdict::Unreachable, error.to_string())
     }
 }
 
-pub fn client(timeout: u64, user_agent: &str) -> reqwest::Result<Client> {
+/// Refuse to send a request toward an address a crawled page has no business
+/// sending us to. Resolution happens here, right before connecting, because
+/// that is the only place a hostname's *current* address is actually known -
+/// checking the URL text alone would miss both a literal internal IP and DNS
+/// rebinding (a name that resolves differently by the time we dial it).
+pub fn host_guard(url: &Url, allow_internal: bool) -> Result<(), String> {
+    if allow_internal {
+        return Ok(());
+    }
+    let Some(host) = url.host_str() else {
+        return Err("URL has no host".to_string());
+    };
+    // 80 only matters as a placeholder for resolution below; the port never
+    // affects which addresses a hostname resolves to.
+    let port = url.port_or_known_default().unwrap_or(80);
+
+    // A literal IP needs no DNS lookup - and to_socket_addrs() on one can
+    // still fail in odd environments, so it is checked directly.
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return if extract::is_blocked_address(ip) {
+            Err(format!("{host} is an internal address - refusing to fetch it (use --allow-internal if this is intentional)"))
+        } else {
+            Ok(())
+        };
+    }
+
+    // A hostname is resolved for real, because that is the address we are
+    // actually about to connect to, not a guess based on its spelling. Every
+    // resolved address is checked, not just the first, so a name that
+    // answers with a mix of public and internal addresses cannot sneak the
+    // internal one through.
+    let addrs = (host, port)
+        .to_socket_addrs()
+        .map_err(|error| format!("could not resolve {host}: {error}"))?;
+    for addr in addrs {
+        if extract::is_blocked_address(addr.ip()) {
+            return Err(format!(
+                "{host} resolves to the internal address {} - refusing to fetch it (use --allow-internal if this is intentional)",
+                addr.ip()
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub fn client(timeout: u64, user_agent: &str, allow_internal: bool) -> reqwest::Result<Client> {
     Client::builder()
         .user_agent(user_agent)
         .timeout(Duration::from_secs(timeout))
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            // Mirrors Policy::limited(5), which this replaces - only the
+            // destination check below is new.
+            if attempt.previous().len() > 5 {
+                return attempt.error("too many redirects");
+            }
+            match host_guard(attempt.url(), allow_internal) {
+                Ok(()) => attempt.follow(),
+                Err(reason) => attempt.error(reason),
+            }
+        }))
         .build()
+}
+
+/// Cap on a response body, applied to the *decoded* (post-gzip) bytes as
+/// they stream in. Content-Length is attacker-controlled and, with gzip
+/// transport compression, bears no relation to the decompressed size we are
+/// about to hold in memory - trusting it is how a hostile server turns a few
+/// compressed kilobytes into a multi-gigabyte allocation. 32 MB is far more
+/// than any real page needs, and small enough that a decompression bomb
+/// cannot turn one crawled page into an out-of-memory crash.
+pub const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
+
+/// Read a response body up to `cap` bytes, decoded as UTF-8 (lossily - a
+/// body that is not valid text still has to fail closed here, not panic).
+/// Reads incrementally and checks the running total after each chunk, so a
+/// hostile body is caught as it grows rather than after it has already been
+/// buffered in full.
+pub async fn read_capped(mut response: reqwest::Response, cap: usize) -> Result<String, String> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+        body.extend_from_slice(&chunk);
+        if body.len() > cap {
+            return Err(format!(
+                "response body is over {} MB after decompression - refusing to read further (looks like a decompression bomb)",
+                cap / 1_048_576
+            ));
+        }
+    }
+    Ok(String::from_utf8_lossy(&body).into_owned())
 }
 
 /// HEAD first (cheap), GET as a fallback.
 ///
 /// Plenty of servers answer HEAD with 405 or 403 while serving GET perfectly -
 /// treating that as broken would fill the report with noise.
-pub async fn check(client: &Client, url: Url) -> Outcome {
+pub async fn check(client: &Client, url: Url, allow_internal: bool) -> Outcome {
     let started = Instant::now();
+
+    if let Err(reason) = host_guard(&url, allow_internal) {
+        return Outcome {
+            status: None,
+            verdict: Verdict::Unreachable,
+            final_url: None,
+            detail: reason,
+            url,
+            millis: started.elapsed().as_millis(),
+        };
+    }
 
     let mut response = client.head(url.clone()).send().await;
     let head_status = response.as_ref().ok().map(|r| r.status().as_u16());
@@ -243,5 +345,102 @@ mod tests {
             millis: 10,
         };
         assert!(!outcome.redirected_offsite());
+    }
+
+    #[test]
+    fn host_guard_refuses_a_loopback_target() {
+        let url = Url::parse("http://127.0.0.1/admin").unwrap();
+        let result = host_guard(&url, false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_lowercase().contains("internal"));
+    }
+
+    #[test]
+    fn host_guard_allows_a_loopback_target_when_allow_internal_is_set() {
+        let url = Url::parse("http://127.0.0.1/admin").unwrap();
+        assert!(host_guard(&url, true).is_ok());
+    }
+
+    #[test]
+    fn host_guard_allows_an_ordinary_public_ip_literal() {
+        let url = Url::parse("http://93.184.216.34/").unwrap();
+        assert!(host_guard(&url, false).is_ok());
+    }
+
+    /// Bare-bones HTTP/1.1 server bound to loopback: accepts connections and
+    /// sends back exactly the raw bytes it is given (status line, headers,
+    /// blank line, body - the caller builds all of it), recording whether it
+    /// was ever hit. Enough to exercise real reqwest behaviour (redirects,
+    /// gzip) without a mock-server dependency.
+    struct Loopback {
+        addr: std::net::SocketAddr,
+        hit: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Loopback {
+        fn start(response: Vec<u8>) -> Self {
+            use std::io::{Read, Write};
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a free loopback port");
+            let addr = listener.local_addr().expect("listener has a local address");
+            let hit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let hit_thread = hit.clone();
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(mut stream) = stream else { continue };
+                    hit_thread.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let mut buffer = [0u8; 512];
+                    let _ = stream.read(&mut buffer);
+                    let _ = stream.write_all(&response);
+                }
+            });
+            Loopback { addr, hit }
+        }
+
+        fn was_hit(&self) -> bool {
+            self.hit.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    fn ok_response() -> Vec<u8> {
+        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi".to_vec()
+    }
+
+    #[tokio::test]
+    async fn checking_a_loopback_target_never_opens_a_connection() {
+        let server = Loopback::start(ok_response());
+        let url = Url::parse(&format!("http://{}/", server.addr)).unwrap();
+
+        let http_client = client(5, "linkscan-test", false).unwrap();
+        let outcome = check(&http_client, url, false).await;
+
+        assert_ne!(outcome.verdict, Verdict::Ok, "a loopback target must be refused, not fetched");
+        assert!(!server.was_hit(), "the guard must refuse before ever opening a connection");
+    }
+
+    #[tokio::test]
+    async fn a_gzip_body_that_inflates_past_the_cap_is_rejected_not_fully_read() {
+        use std::io::Write;
+
+        // 40 MB of zeros compresses to almost nothing under gzip, so this is
+        // a realistic decompression bomb: tiny over the wire, huge once
+        // reqwest's transparent gzip decoding inflates it back out.
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&vec![0u8; 40 * 1024 * 1024]).expect("compress payload");
+        let compressed = encoder.finish().expect("finish gzip stream");
+
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            compressed.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(&compressed);
+
+        let server = Loopback::start(response);
+        let url = Url::parse(&format!("http://{}/", server.addr)).unwrap();
+        let http_client = client(5, "linkscan-test", false).unwrap();
+        let raw_response = http_client.get(url).send().await.expect("request should succeed at the HTTP level");
+
+        let result = read_capped(raw_response, 32 * 1024 * 1024).await;
+        assert!(result.is_err(), "a body that inflates past the cap must be rejected, not read in full");
     }
 }

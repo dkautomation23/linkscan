@@ -108,7 +108,7 @@ so anything older than Cargo 1.78 cannot read it. The binary is self-contained â
 copy it to a server and it runs.
 
 ```bash
-cargo test        # 15 tests, no network
+cargo test        # 28 tests, no internet access (a few use loopback-only fake servers)
 ```
 
 | Flag | Default | Meaning |
@@ -120,7 +120,16 @@ cargo test        # 15 tests, no network
 | `--crawl-delay` | 200 | ms between page fetches |
 | `--no-external` | off | skip links to other domains |
 | `--csv` | â€“ | write the findings to a file |
+| `--force` | off | overwrite `--csv` if it already exists (otherwise refused) |
 | `--user-agent` | linkscan/0.1 | override when a site treats the default badly |
+| `--allow-internal` | off | allow crawling/checking loopback, private and link-local addresses - only for scanning your own internal network |
+
+By default, a page is never fetched if its address (or, for a redirect, the
+resolved address of the next hop) is loopback, a private range (`10/8`,
+`172.16/12`, `192.168/16`), link-local (`169.254/16`, which is also where
+cloud-provider instance metadata lives) or IPv6 unique-local - a public page
+has no business redirecting this tool onto your internal network, and a
+refused request says so instead of silently connecting.
 
 Exit code is `1` when something is broken, so it fits in CI:
 
