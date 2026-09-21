@@ -1,0 +1,48 @@
+# Supply-chain health, graded by the OpenSSF rather than by the author.
+#
+# The result is published to the public Scorecard registry, which is what makes
+# it worth anything: anyone can look the number up without trusting this file.
+name: Scorecard
+
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: "37 5 * * 1"
+  push:
+    branches: [main]
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # upload the SARIF result
+      id-token: write          # sign the published result
+      contents: read
+      actions: read
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Keep the raw result for 5 days
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to the code-scanning dashboard
+        uses: github/codeql-action/upload-sarif@d8073367669608af8fbcc5f63dd0a0d52bb90cff # v4
+        with:
+          sarif_file: results.sarif
